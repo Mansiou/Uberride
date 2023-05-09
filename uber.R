@@ -5,6 +5,9 @@ library(ggplot2)
 library(lubridate)
 library(shiny)
 library(tidyverse)
+library(reshape2)
+library(leaflet)
+library(caret)
 
 #set working directory 
 setwd("~/Desktop/DATA 332")
@@ -20,127 +23,266 @@ UberMay <- read.csv('uber-raw-data-may14.csv')
 #bind all the files 
 combined_UberRides <-rbind(UberSept,UberApr,UberAug,UberJul,UberJun,UberMay)
 
-#change date column to date schema
-mydata <- combined_UberRides
-
-# Identify the date column
-date_column <- combined_UberRides$Date.Time
-
-# Convert the date column to POSIXct format
-combined_UberRides$Date.Time <- as.POSIXct(date_column, format="%Y-%m-%d %H:%M:%S", tz="GMT")
-
-# View the updated data
-head(mydata)
-
-
-# separate date and time components
-date <- as.Date(mydata$Date.Time)
-mydata$hour <- format(date, "%M")
-
-# print the results
-date
-# [1] "2023-05-01"
-
-
-
-
 # separate the datetime column into date and time components
-mydata <- separate(mydata, Date.Time, into = c("Date", "Time"), sep = "\\s+(?=[^\\s]+$)")
+combined_UberRides <- separate(combined_UberRides, Date.Time, into = c("Date", "Time"), sep = "\\s+(?=[^\\s]+$)")
 
 
 # Convert the Date column to a date format
-mydata$Date <- as.Date(mydata$Date, format = "%m/%d/%y")
+combined_UberRides$Date <- as.Date(combined_UberRides$Date, format = "%m/%d/%y")
 
 # Add columns for month and day
-mydata <- mutate(mydata,
-                        Month = month(Date, label = TRUE),
-                        Day = day(Date))
+combined_UberRides <- mutate(combined_UberRides,
+                             Month = month(Date, label = TRUE),
+                             Day = day(Date))
 
 #Separating the time in hour and minutes
-mydata <- separate(mydata, Time, into = c("hour", "minute", "seconds"), sep = ":")
+combined_UberRides <- separate(combined_UberRides, Time, into = c("hour", "minute", "seconds"), sep = ":")
 
 #A new column for day of the week using the wday() function
-mydata <- mydata %>%
+combined_UberRides <- combined_UberRides %>%
   mutate(day = wday(Date, label = TRUE))
 
-#Group the data by month and day and count the number of occurrences
-ridesNum <- mydata %>%
-  group_by(Month, Day) %>%
-  summarize(ridesNum = n())
+#pivot table to display trips by hour 
+trips_hour <- combined_UberRides%>%
+  group_by(hour,Month)
+trips_hour <- trips_hour %>%
+  summarize(num_trips = n())
+trips_pivot <- trips_hour %>%
+  pivot_wider(names_from = hour, values_from = num_trips, values_fill = 0)
 
-#Count the number of rides each month
-monthNum <- mydata %>%
-  group_by(Month) %>%
-  summarize(ridesNum = n())
-
-#Save the pivot tables as CSV files
-write.csv(ridesNum, "rides_per_month.csv", row.names = FALSE)
-write.csv(monthNum, "rides_per_month.csv", row.names = FALSE)
-
-#Count the number of trips each hour
-trips_per_hour <- mydata %>%
-  group_by(hour, Month) %>%
-  summarize(num_rides = n()) %>%
-  arrange(hour)
-
-#Save the pivot table as a CSV file
-write.csv(trips_per_hour, "trips_per_hour.csv", row.names = FALSE)
-
-#Count the number of trips every day of all the months
-Month_day <- mydata %>%
-  group_by(Month, day) %>%
-  summarize(Trips = n())
-
-#Save the pivot table as a CSV file
-write.csv(Month_day, "Month_day.csv", row.names = FALSE)
-
-#Count the number of trips according to bases
-Count <- mydata %>%
-  group_by(Base, Month) %>%
-  summarize(n = n())
-
-Save the pivot table as a CSV file
-write.csv(Count, "Count.csv", row.names = FALSE)
-
-Count the number of trips for each base and day of the week
-Base_week <- mydata %>%
-  group_by(Base, day) %>%
+#Chart that shows Trips by Hour and Month
+trips_hour_month <- combined_UberRides %>%
+  group_by(hour, Month)
+trips_hour_month <- trips_hour_month %>%
   summarize(num_trips = n())
 
-Save the pivot table as a CSV file
-write.csv(Base_week, "Base_week.csv", row.names = FALSE)
+ggplot(trips_hour_month, aes(x = hour, y = num_trips, fill = "month")) +
+  geom_col(position = "dodge") +
+  labs(x = "Hour of Day", y = "Number of Trips", fill = "Month") +
+  scale_fill_discrete(name = "Month", labels = c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"))
 
-# graph showing the number of rides per month
-ggplot(num_month, aes(x = Month, y = ridesNum, fill = Month)) +
+#Chart that displays Trips Every Hour.
+ggplot(trips_hour, aes(x = hour, y = num_trips)) +
+  geom_line() +
+  labs(x = "Hour of Day", y = "Number of Trips")
+
+#Plot data by trips taken during every day of the month.
+trips_per_day <- combined_UberRides %>%
+  group_by(Day) %>%
+  summarize(num_trips = n())
+ggplot(trips_per_day, aes(x = Day, y = num_trips)) +
+  geom_line() +
+  labs(x = "Day of Month", y = "Number of Trips")
+
+# table that shows Trips Every Day (Max 31 days in a month so I should see total trips taken each day). 
+trips_per_day <- combined_UberRides %>%
+  group_by(day,Month)
+trips_per_day <- trips_per_day %>%
+  summarize(num_trips = n())
+trips_per_day <- trips_per_day %>%
+  arrange(Month)
+View(trips_per_day)
+write.csv(trips_per_day, "trips_per_day.csv", row.names = FALSE)
+
+#Chart by Trips by Day and Month 
+trips_per_day_month <- combined_UberRides %>%
+   mutate(month=format(Date,"%b")) %>%
+   group_by(month,day)
+   summarize(num_trips = n()) %>%
+  #group_by(Month, ,wday(Date, label = TRUE)) %>%
+   summarize(total_trips = sum(num_trips))
+ggplot(trips_per_day_month, aes(x = month, y = total_trips, fill = wday)) +
   geom_bar(stat = "identity") +
-  labs(title = "Number of Uber Rides per Month",
-       x = "Month",
-       y = "Number of Rides") +
-  theme_classic()
+  labs(x = "Month", y = "Number of Trips", fill = "Day of Week")
 
-# graph showing the number of trips every hour of the day by month
-ggplot(trips_per_hour, aes(x = reorder(hour, -ridesNum), y = ridesNum, fill = Month)) +
+#Chart Trips by Bases and Month
+trips_per_base_month <- combined_UberRides %>%
+  mutate(month = format(Date, "%b")) %>%
+  group_by(month, Base) %>%
+  summarize(total_trips = n())
+ggplot(trips_per_base_month, aes(x = Base, y = total_trips, fill = month)) +
   geom_bar(stat = "identity") +
-  labs(title = "Number of Uber Rides Per Hour",
-       x = "Time of Day",
-       y = "Number of Rides") +
-  theme_classic()
+  labs(x = "Base", y = "Number of Trips", fill = "Month")
 
-# graph showing the number of trips every hour
-ggplot(trips_per_hour, aes(x = reorder(hour, -ridesNum), y = ridesNum, fill = hour)) +
+#heatmap that displays by hour and day 
+trips_per_hour_day <- combined_UberRides %>%
+  group_by(hour, day) %>%
+  summarize(total_trips = n())
+
+trips_per_hour_day_wide <- dcast(trips_per_hour_day, hour ~ day, value.var = "total_trips")
+ggplot(melt(trips_per_hour_day_wide, id.vars = "hour"), aes(x = variable, y = hour, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  labs(x = "Day of Week", y = "Hour of Day", fill = "Number of Trips")
+
+#Heat map by month and day
+trips_per_month_day <- combined_UberRides %>%
+  mutate(month = factor(format(Date, "%b"), levels = month.abb),
+         day = factor(format(Date, "%d"))) %>%
+  group_by(Month, day) %>%
+  summarize(total_trips = n())
+
+trips_per_month_day_wide <- dcast(trips_per_month_day, day ~ Month, value.var = "total_trips")
+
+ggplot(melt(trips_per_month_day_wide, id.vars = "day"), aes(x = variable, y = day, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient(low = "black", high = "purple") +
+  labs(x = "Month", y = "Day", fill = "Number of Trips")
+
+#Heat map by month and week
+trips_per_month_week <- combined_UberRides %>%
+  mutate(month = factor(format(Date, "%b"), levels = month.abb),
+         week = factor(floor_date(Date, unit = "week"), format = "%Y-%m-%d")) %>%
+  group_by(month, week) %>%
+  summarize(total_trips = n())
+
+trips_per_month_week_wide <- dcast(trips_per_month_week, week ~ month, value.var = "total_trips")
+ggplot(melt(trips_per_month_week_wide, id.vars = "week"), aes(x = variable, y = week, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  labs(x = "Month", y = "Week", fill = "Number of Trips")
+#heatmap basses and day of week 
+trips_per_base_dow <- combined_UberRides %>%
+  mutate(dow = factor(wday(Date, label = TRUE, abbr = FALSE))) %>%
+  group_by(Base, dow) %>%
+  summarize(total_trips = n())
+
+trips_per_base_dow_wide <- dcast(trips_per_base_dow, Base ~ dow, value.var = "total_trips")
+ggplot(melt(trips_per_base_dow_wide, id.vars = "Base"), aes(x = variable, y = Base, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "green") +
+  labs(x = "Day of Week", y = "Base", fill = "Number of Trips")
+
+#leaflet
+ui <- fluidPage(
+  titlePanel("Trips Map"),
+  sidebarLayout(
+    sidebarPanel(
+      dateRangeInput("date_range", label = "Select Date Range:",
+                     start = "2022-01-01", end = "2022-12-31")
+    ),
+    mainPanel(
+      leafletOutput("map", width = "100%", height = "700px")
+    )
+  )
+)
+server <- function(input, output) {
+  
+  # Filter data based on date range input
+  filtered_data <- reactive({
+    combined_UberRides %>%
+      filter(Date >= input$date_range[1] & Date <= input$date_range[2])
+  })
+  
+  # Create Leaflet map
+  output$map <- renderLeaflet({
+    leaflet(data = filtered_data()) %>%
+      addTiles() %>%
+      addMarkers(lng = ~Lon, lat = ~Lat, popup = ~paste( trips_per_base_dow_wide, "<br>",Date, "<br>", Base))
+  })
+  
+}
+shinyApp(ui = ui, server = server)
+
+#prediction model 
+model <- combined_UberRides %>%
+  group_by(hour, Month, day) %>%
+  summarise(total_trips = n())
+ggplot(model, aes(x = Month, y = total_trips, fill = day)) +
   geom_bar(stat = "identity") +
-  labs(title = "Number of Uber Rides Per Hour",
-       x = "Time of Day",
-       y = "Number of Rides") +
-  theme_classic()
+  labs(x = "Month", y = "Number of Trips", fill = "day")
 
-# graph showing the number of trips every day for each month with the day of the week
-ggplot(Month_day, aes(x = Month, y = Trips, fill = day)) +
-  geom_bar(stat = "identity") +
-  labs(title = "Number of Trips every month with day fo the week",
-       x = "Month",
-       y = "Number of Rides") +
-  theme_minimal()
+#shiny app
+# Define UI for Shiny app
+ui <- fluidPage(
+  # Create a sidebar with the input options
+  sidebarLayout(
+    sidebarPanel(
+      radioButtons("graph_type", label = "Select a graph type:",
+                   choices = c("trips by day and month", "trips by hour and month", "trips by base","Heatmap 1","Heatmap 2","Heatmap 3","prediction model","map"))
+    ),
+    # Create the main panel with the graph output
+    mainPanel(
+      plotOutput("graph")
+    )
+  )
+)
+# Define server for Shiny app
+server <- function(input, output) {
+  
+  output$graph <- renderPlot({
+    if(input$graph_type == "trips by day and month") {
+      ggplot(trips_per_day_month, aes(x = month, y = total_trips, fill = wday)) +
+        geom_bar(stat = "identity") +
+        labs(x = "Month", y = "Number of Trips", fill = "Day of Week")
+    }
+  })
+  
+  
+  output$graph <- renderPlot({
+    if(input$graph_type == "trips by hour and month") {
+      ggplot(trips_hour_month, aes(x = hour, y = num_trips, fill = "month")) +
+        geom_col(position = "dodge") +
+         labs(x = "Hour of Day", y = "Number of Trips", fill = "Month") +
+          scale_fill_discrete(name = "Month", labels = c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"))
+      
+    }
+  })
+  
+  
+  output$graph <- renderPlot({
+    if(input$graph_type == "trips by base") {
+      ggplot(trips_per_base_month, aes(x = Base, y = total_trips, fill = month)) +
+        geom_bar(stat = "identity") +
+        labs(x = "Base", y = "Number of Trips", fill = "Month")
+    }
+  })
+  output$graph <- renderPlot({
+    if(input$graph_type == "Heatmap 1") {
+      ggplot(melt(trips_per_month_week_wide, id.vars = "week"), aes(x = variable, y = week, fill = value)) +
+        geom_tile() +
+        scale_fill_gradient(low = "white", high = "steelblue") +
+        labs(x = "Month", y = "Week", fill = "Number of Trips")
+    }
+  })
+  output$graph <- renderPlot({
+    if(input$graph_type == "Heatmap 2") {
+      
+      ggplot(melt(trips_per_month_day_wide, id.vars = "day"), aes(x = variable, y = day, fill = value)) +
+        geom_tile() +
+        scale_fill_gradient(low = "black", high = "purple") +
+        labs(x = "Month", y = "Day", fill = "Number of Trips")
+      
+    }
+  })
+  output$graph <- renderPlot({
+    if(input$graph_type == "Heatmap 3") {
+      ggplot(melt(trips_per_base_dow_wide, id.vars = "Base"), aes(x = variable, y = Base, fill = value)) +
+        geom_tile() +
+        scale_fill_gradient(low = "white", high = "green") +
+        labs(x = "Day of Week", y = "Base", fill = "Number of Trips")
+      
+    }
+  })
+  output$graph <- renderPlot({
+    if(input$graph_type == "Heatmap 4"){
+      ggplot(melt(trips_per_hour_day_wide, id.vars = "hour"), aes(x = variable, y = hour, fill = value)) +
+        geom_tile() +
+        scale_fill_gradient(low = "white", high = "steelblue") +
+        labs(x = "Day of Week", y = "Hour of Day", fill = "Number of Trips")
+    }
+  })
+  output$graph <- renderPlot({
+    if(input$graph_type == "prediction model"){
+      ggplot(model, aes(x = Month, y = total_trips, fill = day)) +
+        geom_bar(stat = "identity") +
+        labs(x = "Month", y = "Number of Trips", fill = "day")
+    }
+  }) 
+  
+}
 
+# Run the app
+shinyApp(ui, server)
 
 
